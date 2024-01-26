@@ -40,7 +40,7 @@ class KF:
         return Gaussian(mu, Sigma)
     
     def measurement_update(self, bel: Gaussian, z: np.ndarray) -> Gaussian:
-        if self.C is None:
+        if self.C is None or z is None:
             return bel
         
         K = bel.Sigma @ self.C.T
