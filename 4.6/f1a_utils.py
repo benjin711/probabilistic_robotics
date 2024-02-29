@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Callable, Tuple
 
 import numpy as np
-from scipy.stats import multivariate_normal
+from scipy.stats import multivariate_normal, norm
 import matplotlib.pyplot as plt
 
 from dataclasses import dataclass
@@ -20,19 +20,20 @@ class Partitions2DIterator:
             self.it_x = 0
             self.it_y = 0
 
-        def __next__(self) -> Tuple[float, float, float]:
+        def __next__(self) -> Tuple[int, int, float, float, float]:
             if self.it_x >= self.partitions.xnum:
                 raise StopIteration
 
             state = self.partitions.idx_to_state(self.it_x, self.it_y)
             prob = self.partitions.ps[self.it_x, self.it_y]
+            curr_it_x, curr_it_y = self.it_x, self.it_y
 
             self.it_y += 1
             if self.it_y >= self.partitions.ynum:
                 self.it_y = 0
                 self.it_x += 1
 
-            return state[0], state[1], prob
+            return curr_it_x, curr_it_y, state[0], state[1], prob
     
 class Partitions2D:
     def __init__(
@@ -65,8 +66,8 @@ class Partitions2D:
 
     def state_to_idx(self, x: float, y: float) -> Tuple[int, int]:
         return (
-            int((x - self.x_delta / 2 - self.xmin) / self.x_delta), 
-            int((y - self.y_delta / 2 - self.ymin) / self.y_delta)
+            int(round((x - self.x_delta / 2 - self.xmin) / self.x_delta)), 
+            int(round((y - self.y_delta / 2 - self.ymin) / self.y_delta))
         )
 
     def init_ps(self, prior: Callable) -> None:
@@ -101,9 +102,10 @@ class Partitions2D:
 
         # Create a colormap
         dz = hist.ravel()
-        CMAP_FACTOR = 10
         cmap = plt.cm.get_cmap('jet')  # 'jet' is the name of the colormap
-        rgba = [cmap(CMAP_FACTOR*k) for k in dz] 
+        max_height = np.max(dz)   # get the maximum bar height
+        min_height = np.min(dz)
+        rgba = [cmap((k-min_height)/max_height) for k in dz] 
 
         fig = plt.figure(figsize=(10, 6))
         ax1 = fig.add_subplot(121, projection='3d', title="Histogram 3D Visualization")
@@ -122,10 +124,9 @@ class Partitions2D:
         ax1.set_xlabel('X')
         ax1.set_ylabel('V')
         ax1.set_zlabel('P')
-        ax1.set_zlim(0, 0.5)
 
         ax2 = fig.add_subplot(122, aspect="equal", title="Histogram 2D Visualization")
-        pc2 = ax2.pcolormesh(xpos, ypos, hist, cmap="jet", vmin=0, vmax=1/CMAP_FACTOR)
+        pc2 = ax2.pcolormesh(xpos, ypos, hist, cmap="jet")
         ax2.set_xlabel('X')
         ax2.set_ylabel('V')
 
@@ -161,7 +162,13 @@ def prediction_func(curr_state: State, prev_state: State, control: float) -> flo
         [1, 1],
         [0, 1]
     ])
-    cov = [[1/4, 1/2],[1/2, 1]]
+
+    # Having perfectly correlated RV can lead to issues, e.g. cases where the multivariate
+    # gaussian will always yield 0 due discrete nature of the representative states
+    # and the density lying on a line. Adding an epsilon makes the experiment more realistic 
+    # and makes the belief look more like a Gaussian avoiding weird corner cases
+    EPSILON = 0.05
+    cov = [[1/4, 1/2 - EPSILON],[1/2 - EPSILON, 1]]
     mean = A @ np.array([[prev_state.x], [prev_state.v]])
     mean = mean.T.squeeze().tolist()
     mvg = multivariate_normal(mean, cov, allow_singular=True)
@@ -170,7 +177,10 @@ def prediction_func(curr_state: State, prev_state: State, control: float) -> flo
 
 
 def measurement_func(curr_state: State, measurement: float):
-    return 1
+    var = 10
+    gaussian = norm(loc=curr_state.x, scale=np.sqrt(var))
+    return gaussian.pdf(measurement)
+
     
 
 class DiscreteBayesFilter:
@@ -189,11 +199,13 @@ class DiscreteBayesFilter:
     ) -> Partitions2D:
         new_partitions = deepcopy(partitions)
 
-        for curr_x, curr_v, _ in new_partitions:
-            it_x, it_v = partitions.state_to_idx(curr_x, curr_v)
+        for it_x, it_v, curr_x, curr_v, _ in new_partitions:
             new_partitions[it_x, it_v] = 0
             
-            for prev_x, prev_v, prev_p in partitions:
+            for _, _, prev_x, prev_v, prev_p in partitions:
+                if prev_p == 0:
+                    continue
+
                 new_partitions[it_x, it_v] += self.prediction_func(
                     State(curr_x, curr_v), 
                     State(prev_x, prev_v),
@@ -211,9 +223,7 @@ class DiscreteBayesFilter:
             return partitions
 
         normalizer = 0
-        for curr_x, curr_v, _ in partitions:
-            it_x, it_v = partitions.state_to_idx(curr_x, curr_v)
-
+        for it_x, it_v, curr_x, curr_v, _ in partitions:
             partitions[it_x, it_v] *= self.measurement_func(
                 State(curr_x, curr_v), 
                 measurement
@@ -221,8 +231,7 @@ class DiscreteBayesFilter:
 
             normalizer += partitions[it_x, it_v]
 
-        for curr_x, curr_v, _ in partitions:
-            it_x, it_v = partitions.state_to_idx(curr_x, curr_v)
+        for it_x, it_v, _, _, _ in partitions:
             partitions[it_x, it_v] /= normalizer
         
         return partitions

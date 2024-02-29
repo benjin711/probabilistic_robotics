@@ -13,22 +13,23 @@ def parse_args():
 
 def f1a():
     TIMESTEPS = 5
-    MIN_X, MAX_X, NUM_X = -10, 10, 20
-    MIN_Y, MAX_Y, NUM_Y = -10, 10, 20
+    MIN_X, MAX_X, NUM_X = -15, 15, 30
+    MIN_Y, MAX_Y, NUM_Y = -15, 15, 30
     prior = Prior(MIN_X, MAX_X, NUM_X, MIN_Y, MAX_Y, NUM_Y)
     partitions = Partitions2D(MIN_X, MAX_X, NUM_X, MIN_Y, MAX_Y, NUM_Y, prior)
 
     controls = [None] * 5
     measurements = [None] * 5
+    measurements[-1] = 5
 
     dbf = DiscreteBayesFilter(prediction_func, measurement_func)
 
     evolution = [partitions]
-    partitions.visualize_2D_histogram(Path(f"4.6/out/f1a_vist{0}.png"))
+    partitions.visualize_2D_histogram(Path(f"4.6/out/f1a_vis_t{0}.png"))
 
     for t in range(TIMESTEPS):
         partitions = dbf.update(partitions, measurements[t], controls[t])
-        partitions.visualize_2D_histogram(Path(f"4.6/out/f1a_vist{t+1}.png"))
+        partitions.visualize_2D_histogram(Path(f"4.6/out/f1a_vis_t{t+1}.png"))
         evolution.append(partitions)
 
 
