@@ -1,5 +1,5 @@
 import sys
-from matplotlib import pyplot as plt, transforms
+from matplotlib import pyplot as plt
 from matplotlib.patches import Ellipse, Circle
 from scipy.stats import chi2
 
