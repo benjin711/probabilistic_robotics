@@ -258,6 +258,8 @@ class DiscreteBayesFilter:
     ) -> Partitions2D:
         
         partitions = self.prediction(partitions, control)
+        pred_partitions = deepcopy(partitions)
+        
         partitions = self.correction(partitions, measurement)
 
-        return partitions
+        return partitions, pred_partitions
