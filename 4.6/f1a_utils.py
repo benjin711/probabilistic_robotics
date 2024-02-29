@@ -5,6 +5,7 @@ from typing import Callable, Tuple
 import numpy as np
 from scipy.stats import multivariate_normal, norm
 import matplotlib.pyplot as plt
+import concurrent.futures
 
 from dataclasses import dataclass
 
@@ -181,7 +182,22 @@ def measurement_func(curr_state: State, measurement: float):
     gaussian = norm(loc=curr_state.x, scale=np.sqrt(var))
     return gaussian.pdf(measurement)
 
-    
+
+def _calc_partition_probability(args):
+    it_x, it_v, curr_x, curr_v, partitions, control, prediction_func = args
+    partition_probability = 0.0
+
+    for _, _, prev_x, prev_v, prev_p in partitions:
+        if prev_p == 0:
+            continue
+
+        partition_probability += prediction_func(
+            State(curr_x, curr_v), 
+            State(prev_x, prev_v),
+            control
+        ) * prev_p
+
+    return it_x, it_v, partition_probability
 
 class DiscreteBayesFilter:
     def __init__(
@@ -199,18 +215,15 @@ class DiscreteBayesFilter:
     ) -> Partitions2D:
         new_partitions = deepcopy(partitions)
 
-        for it_x, it_v, curr_x, curr_v, _ in new_partitions:
-            new_partitions[it_x, it_v] = 0
-            
-            for _, _, prev_x, prev_v, prev_p in partitions:
-                if prev_p == 0:
-                    continue
+        with concurrent.futures.ProcessPoolExecutor() as executor:
+            params = [
+                (it_x, it_v, curr_x, curr_v, partitions, control, self.prediction_func)
+                for it_x, it_v, curr_x, curr_v, _ in new_partitions
+            ]
+            results = executor.map(_calc_partition_probability, params)
 
-                new_partitions[it_x, it_v] += self.prediction_func(
-                    State(curr_x, curr_v), 
-                    State(prev_x, prev_v),
-                    control
-                ) * prev_p
+            for it_x, it_v, p in results:
+                new_partitions[it_x, it_v] = p
         
         return new_partitions
     
