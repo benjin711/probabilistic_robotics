@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 import time
 
-from f1a_utils import Prior, Partitions2D, DiscreteBayesFilter, measurement_func, prediction_func
+from f1a_utils import Prior, Partitions2D, DiscreteBayesFilter, MinMaxNum, measurement_func, prediction_func
 
 def parse_args():
     # sys.argv[0] is the script name itself
@@ -16,8 +16,12 @@ def f1():
     TIMESTEPS = 5
     MIN_X, MAX_X, NUM_X = -15, 15, 30
     MIN_Y, MAX_Y, NUM_Y = -15, 15, 30
-    prior = Prior(MIN_X, MAX_X, NUM_X, MIN_Y, MAX_Y, NUM_Y)
-    partitions = Partitions2D(MIN_X, MAX_X, NUM_X, MIN_Y, MAX_Y, NUM_Y, prior)
+    x_ivals = MinMaxNum(MIN_X, MAX_X, NUM_X)
+    y_ivals = MinMaxNum(MIN_Y, MAX_Y, NUM_Y)
+    
+    prior = Prior(x_ivals, y_ivals)
+    partitions = Partitions2D(x_ivals, y_ivals)
+    partitions.init_with_prior(prior)
 
     controls = [None] * 5
     measurements = [None] * 5
