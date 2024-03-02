@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 import time
 
-from histogram_filter_utils import Prior, Partitions2D, DiscreteBayesFilter, MinMaxNum, measurement_func, prediction_func
+from histogram_filter_utils import Prior_ex1, GridPartitions, DiscreteBayesFilter, MinMaxNum, measurement_func_ex1, prediction_func_3x1
 
 def parse_args():
     # sys.argv[0] is the script name itself
@@ -18,16 +18,17 @@ def f1():
     MIN_Y, MAX_Y, NUM_Y = -15, 15, 60
     x_ivals = MinMaxNum(MIN_X, MAX_X, NUM_X)
     y_ivals = MinMaxNum(MIN_Y, MAX_Y, NUM_Y)
+    ivals = (x_ivals, y_ivals)
     
-    prior = Prior(x_ivals, y_ivals)
-    partitions = Partitions2D(x_ivals, y_ivals)
+    prior = Prior_ex1(0.25, ivals)
+    partitions = GridPartitions(ivals)
     partitions.init_with_prior(prior)
 
     controls = [None] * 5
     measurements = [None] * 5
     measurements[-1] = 5
 
-    dbf = DiscreteBayesFilter(prediction_func, measurement_func)
+    dbf = DiscreteBayesFilter(prediction_func_3x1, measurement_func_ex1)
 
     evolution = [partitions]
     partitions.visualize_2D_histogram(Path(f"4.6/out/f1a_vis_t{0}.png"))

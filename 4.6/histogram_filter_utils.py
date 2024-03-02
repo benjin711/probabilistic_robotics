@@ -1,6 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
-from typing import Callable, Tuple
+from typing import Any, Callable, Generator, Tuple
 
 import numpy as np
 from scipy.stats import multivariate_normal, norm
@@ -10,141 +10,137 @@ import concurrent.futures
 from dataclasses import dataclass
 
 @dataclass
-class State:
-    x: float
-    v: float
-
-@dataclass
 class MinMaxNum:
     min: float
     max: float
     num: int
 
 
-class SimplePartitions2DIterator:
-    def __init__(self, partitions: "Partitions2D") -> None:
+class SimpleGridPartitionsIterator:
+    def __init__(self, partitions: "GridPartitions") -> None:
         self.partitions = partitions
-        self.it_x = 0
-        self.it_y = 0
+        self.idxs = np.ndindex(partitions._ps.shape)
 
-    def __iter__(self) -> "SimplePartitions2DIterator":
+    def __iter__(self) -> "SimpleGridPartitionsIterator":
         return self
 
-    def __next__(self) -> Tuple[int, int, float, float, float]:
-        if self.it_x >= self.partitions.x_ivals.num:
-            raise StopIteration
+    def __next__(self) -> Tuple[Tuple[int], Tuple[Any], float]:
+        idx = next(self.idxs)
+        state = self.partitions.idx_to_state(idx)
+        prob = self.partitions._ps[idx]
 
-        state = self.partitions.idx_to_state(self.it_x, self.it_y)
-        prob = self.partitions.ps[self.it_x, self.it_y]
-        curr_it_x, curr_it_y = self.it_x, self.it_y
-
-        self.it_y += 1
-        if self.it_y >= self.partitions.y_ivals.num:
-            self.it_y = 0
-            self.it_x += 1
-
-        return curr_it_x, curr_it_y, state[0], state[1], prob
+        return idx, state, prob
         
-class RelevantPartitions2DIterator:
-    def __init__(self, partitions: "Partitions2D") -> None:
+class RelevantPartitionsIterator:
+    def __init__(self, partitions: "GridPartitions") -> None:
         self.partitions = partitions
         self.it = 0
 
-    def __iter__(self) -> "RelevantPartitions2DIterator":
+    def __iter__(self) -> "RelevantPartitionsIterator":
         return self
 
-    def __next__(self) -> Tuple[int, int, float, float, float]:
+    def __next__(self) -> Tuple[Tuple[int], Tuple[Any], float]:
         if self.it >= len(self.partitions.relevant_indices):
             raise StopIteration
 
-        it_x, it_y = self.partitions.relevant_indices[self.it]
-        state = self.partitions.idx_to_state(it_x, it_y)
-        prob = self.partitions.ps[it_x, it_y]
+        idx = self.partitions.relevant_indices[self.it]
+        state = self.partitions.idx_to_state(idx)
+        prob = self.partitions._ps[idx]
         self.it += 1
 
-        return it_x, it_y, state[0], state[1], prob
+        return idx, state, prob
     
-class Partitions2D:
+class GridPartitions:
     PROBABILITY_THRESHOLD = 0.9
 
     def __init__(
         self, 
-        x_ivals: MinMaxNum,
-        y_ivals: MinMaxNum,
+        ivals: Tuple[MinMaxNum],
     ) -> None:
-        self.ps = np.zeros((x_ivals.num, y_ivals.num))
-        self._x_ivals = x_ivals
-        self._y_ivals = y_ivals
-        self._x_delta = (x_ivals.max - x_ivals.min) / x_ivals.num
-        self._y_delta = (y_ivals.max - y_ivals.min) / y_ivals.num
+        self._ps = np.zeros([ival.num for ival in ivals])
+        self._ivals = ivals
+        self._deltas = [(ival.max - ival.min) / ival.num for ival in ivals]
 
         self.relevant_indices = []
 
     @property
-    def x_ivals(self) -> MinMaxNum:
-        return self._x_ivals
-    
-    @property
-    def y_ivals(self) -> MinMaxNum:
-        return self._y_ivals
+    def ps(self) -> np.ndarray:
+        return self._ps
 
-    def idx_to_state(self, it_x: int, it_y: int) -> Tuple[float, float]:
+    @property
+    def ivals(self) -> Tuple[MinMaxNum]:
+        return self._ivals
+
+    def idx_to_state(self, idxs: Tuple[int]) -> Tuple[float, float]:
         return (
-            self._x_ivals.min + it_x * self._x_delta + self._x_delta / 2, 
-            self._y_ivals.min + it_y * self._y_delta + self._y_delta / 2
+            ival.min + idx * delta + delta / 2
+            for ival, delta, idx in zip(self._ivals, self._deltas, idxs)
         )
 
     def init_with_prior(self, prior: Callable) -> None:
         normalizer = 0
-        for it_x in range(self.ps.shape[0]):
-            for it_y in range(self.ps.shape[1]):
-                state = self.idx_to_state(it_x, it_y)
-                self.ps[it_x, it_y] = prior(*state)
-                normalizer += self.ps[it_x, it_y]
 
-        for it_x in range(self.ps.shape[0]):
-            for it_y in range(self.ps.shape[1]):
-                self.ps[it_x, it_y] /= normalizer
+        for idx, state, _ in self.get_simple_partitions_iter():
+            self._ps[idx] = prior(state)
+            normalizer += self._ps[idx]
+
+        for idx in np.ndindex(self._ps.shape):
+            self._ps[idx] /= normalizer
     
-    def get_simple_partitions_iter(self) -> SimplePartitions2DIterator:
-        return SimplePartitions2DIterator(self)
+    def get_simple_partitions_iter(self) -> SimpleGridPartitionsIterator:
+        return SimpleGridPartitionsIterator(self)
 
     def _calc_relevant_indices(self) -> None:
 
         def _calc_relevance_threshold() -> None:
             # Flatten self.ps and sort it in descending order
-            sorted_ps = np.sort(self.ps.flatten())[::-1]
+            sorted_ps = np.sort(self._ps.flatten())[::-1]
 
             # Find the index when the cumulative sum exceeds the threshold
             cumsum = np.cumsum(sorted_ps)
-            idx = np.where(cumsum > Partitions2D.PROBABILITY_THRESHOLD)[0][0]
+            idx = np.where(cumsum > GridPartitions.PROBABILITY_THRESHOLD)[0][0]
 
             return sorted_ps[idx]
 
-        self.relevant_indices = np.argwhere(
-            self.ps >= _calc_relevance_threshold()).tolist()
+        self.relevant_indices = [tuple(idx) for idx in np.argwhere(
+            self._ps >= _calc_relevance_threshold())]
     
-    def get_relevant_partitions_iter(self) -> RelevantPartitions2DIterator:
+    def get_relevant_partitions_iter(self) -> RelevantPartitionsIterator:
         if self.relevant_indices:
-            return RelevantPartitions2DIterator(self)
+            return RelevantPartitionsIterator(self)
 
         self._calc_relevant_indices()
-        return RelevantPartitions2DIterator(self)
+        return RelevantPartitionsIterator(self)
     
-    def __getitem__(self, index: Tuple[int, int]) -> float:
-        return self.ps[index[0], index[1]]
+    def __getitem__(self, idx: Tuple[int]) -> float:
+        return self._ps[idx]
     
-    def __setitem__(self, index: Tuple[int, int], value: float) -> None:
-        self.ps[index[0], index[1]] = value
+    def __setitem__(self, idx: Tuple[int], value: float) -> None:
+        self._ps[idx] = value
     
-    def visualize_2D_histogram(self, path: Path) -> None:
-        # Create a 2D histogram
-        hist = self.ps
-        xedges = np.linspace(self._x_ivals.min, self._x_ivals.max, self._x_ivals.num, endpoint=False)
-        yedges = np.linspace(self._y_ivals.min, self._y_ivals.max, self._y_ivals.num, endpoint=False)
+    def visualize_2D_histogram(
+        self, 
+        path: Path,
+        slices: Tuple[Any] = (Ellipsis,),
+        labels: Tuple[str] = ("X", "V", "p")
+    ) -> None:
+        # Create 2D array
+        hist = self._ps[slices]
+        assert len(hist.shape) == 2, "Histogram must be 2D"
+
+        # Fetch the information from the relevant x and y axes
+        x_idx, y_idx = 0, 1
+        alt_idxs = [idx for idx, obj in enumerate(slices) if isinstance(obj, (slice, type(Ellipsis)))][:2]
+        if len(alt_idxs) == 2:
+            x_idx, y_idx = alt_idxs
+
+        x_edges = np.linspace(self._ivals[x_idx].min, self._ivals[x_idx].max, self._ivals[x_idx].num, endpoint=False)
+        y_edges = np.linspace(self._ivals[y_idx].min, self._ivals[y_idx].max, self._ivals[y_idx].num, endpoint=False)
+        x_delta = self._deltas[x_idx]
+        y_delta = self._deltas[y_idx]
 
         # Construct arrays for the anchor positions of the bars.
-        xpos, ypos = np.meshgrid(xedges + self._x_delta, yedges + self._y_delta, indexing="ij")
+        xpos, ypos = np.meshgrid(x_edges + 0.5 * x_delta, y_edges + 0.5 * y_delta, indexing="ij")
 
         # Create a colormap
         dz = hist.ravel()
@@ -160,46 +156,52 @@ class Partitions2D:
             xpos.ravel(), 
             ypos.ravel(), 
             0, 
-            self._x_delta, 
-            self._y_delta, 
+            x_delta, 
+            y_delta, 
             dz, 
             color=rgba, 
             zsort='average'
         )
         # Add axis labels
-        ax1.set_xlabel('X')
-        ax1.set_ylabel('V')
-        ax1.set_zlabel('P')
+        ax1.set_xlabel(labels[0])
+        ax1.set_ylabel(labels[1])
+        ax1.set_zlabel(labels[2])
 
         ax2 = fig.add_subplot(122, aspect="equal", title="Histogram 2D Visualization")
         pc2 = ax2.pcolormesh(xpos, ypos, hist, cmap="jet")
-        ax2.set_xlabel('X')
-        ax2.set_ylabel('V')
+        ax2.set_xlabel(labels[0])
+        ax2.set_ylabel(labels[1])
 
         fig.colorbar(pc2, ax=ax2, orientation="vertical")
 
         plt.subplots_adjust(wspace=0.5)
         plt.savefig(path)
 
-    
 
-class Prior:
+class Prior_ex1:
     def __init__(
-        self, 
-        x_ivals: MinMaxNum,
-        y_ivals: MinMaxNum
+        self,
+        value: float,
+        ivals: Tuple[MinMaxNum],
     ) -> None:
-        self.x_delta = (x_ivals.max - x_ivals.min) / x_ivals.num
-        self.y_delta = (y_ivals.max - y_ivals.min) / y_ivals.num
+        self.value = value
+        self.deltas = [(ival.max - ival.min) / ival.num for ival in ivals]
 
-    def __call__(self, x: float, v: float) -> float:
-        if -self.x_delta <= x <= self.x_delta and -self.y_delta <= v <= self.y_delta:
-            return 0.25
+    def __call__(self, state: Tuple[float]) -> float:
+        if all(-delta <= x <= delta for x, delta in zip(state, self.deltas)): 
+            return self.value
         
         return 0
     
 
-def prediction_func(curr_state: State, prev_state: State, control: float) -> float:
+def prediction_func_3x1(
+    curr_state: Generator[float, None, None], 
+    prev_state: Generator[float, None, None], 
+    control: float
+) -> float:
+    curr_state = list(curr_state)
+    prev_state = list(prev_state)
+
     A = np.array([
         [1, 1],
         [0, 1]
@@ -211,31 +213,32 @@ def prediction_func(curr_state: State, prev_state: State, control: float) -> flo
     # and makes the belief look more like a Gaussian avoiding weird corner cases
     EPSILON = 0.05
     cov = [[1/4, 1/2 - EPSILON],[1/2 - EPSILON, 1]]
-    mean = A @ np.array([[prev_state.x], [prev_state.v]])
+    mean = A @ np.array([[prev_state[0]], [prev_state[1]]])
     mean = mean.T.squeeze().tolist()
     mvg = multivariate_normal(mean, cov, allow_singular=True)
 
-    return mvg.pdf([curr_state.x, curr_state.v])
+    return mvg.pdf([curr_state[0], curr_state[1]])
 
 
-def measurement_func(curr_state: State, measurement: float):
+def measurement_func_ex1(curr_state: Generator[float, None, None], measurement: float):
+    curr_state = list(curr_state)
     var = 10
-    gaussian = norm(loc=curr_state.x, scale=np.sqrt(var))
+    gaussian = norm(loc=curr_state[0], scale=np.sqrt(var))
     return gaussian.pdf(measurement)
 
 
 def _calc_partition_probability(args):
-    it_x, it_v, curr_x, curr_v, partitions, control, prediction_func = args
+    idx, curr_state, partitions, control, prediction_func = args
     partition_probability = 0.0
 
-    for _, _, prev_x, prev_v, prev_p in partitions.get_relevant_partitions_iter():
+    for _, prev_state, prev_p in partitions.get_relevant_partitions_iter():
         partition_probability += prediction_func(
-            State(curr_x, curr_v), 
-            State(prev_x, prev_v),
+            curr_state, 
+            prev_state,
             control
         ) * prev_p
 
-    return it_x, it_v, partition_probability
+    return idx, partition_probability
 
 class DiscreteBayesFilter:
     def __init__(
@@ -248,57 +251,57 @@ class DiscreteBayesFilter:
 
     def prediction(
         self,
-        partitions: Partitions2D,
+        partitions: GridPartitions,
         control: float
-    ) -> Partitions2D:
-        new_partitions = Partitions2D(partitions._x_ivals, partitions._y_ivals)
+    ) -> GridPartitions:
+        new_partitions = GridPartitions(partitions.ivals)
 
         normalizer = 0
         with concurrent.futures.ProcessPoolExecutor() as executor:
             params = [
-                (it_x, it_v, curr_x, curr_v, partitions, control, self.prediction_func)
-                for it_x, it_v, curr_x, curr_v, _ in new_partitions.get_simple_partitions_iter()
+                (idx, list(state), partitions, control, self.prediction_func)
+                for idx, state, _ in new_partitions.get_simple_partitions_iter()
             ]
             results = executor.map(_calc_partition_probability, params)
 
-            for it_x, it_v, p in results:
-                new_partitions[it_x, it_v] = p
+            for idx, p in results:
+                new_partitions[idx] = p
                 normalizer += p
         
-        for it_x, it_v, _, _, _ in new_partitions.get_simple_partitions_iter():
-            new_partitions[it_x, it_v] /= normalizer
+        for idx, _, _ in new_partitions.get_simple_partitions_iter():
+            new_partitions[idx] /= normalizer
         
         return new_partitions
     
     def correction(
         self,
-        partitions: Partitions2D,
+        partitions: GridPartitions,
         measurement: float,
-    ) -> Partitions2D:
+    ) -> GridPartitions:
         if measurement is None:
             return partitions
 
         normalizer = 0
-        for it_x, it_v, curr_x, curr_v, _ in partitions.get_simple_partitions_iter():
-            partitions[it_x, it_v] *= self.measurement_func(
-                State(curr_x, curr_v), 
+        for idx, curr_state, _ in partitions.get_simple_partitions_iter():
+            partitions[idx] *= self.measurement_func(
+                curr_state, 
                 measurement
             )
 
-            normalizer += partitions[it_x, it_v]
+            normalizer += partitions[idx]
 
-        for it_x, it_v, _, _, _ in partitions.get_simple_partitions_iter():
-            partitions[it_x, it_v] /= normalizer
+        for idx, _, _ in partitions.get_simple_partitions_iter():
+            partitions[idx] /= normalizer
         
         return partitions
 
 
     def update(
         self,
-        partitions: Partitions2D, 
+        partitions: GridPartitions, 
         measurement: float = None, 
         control: float = None
-    ) -> Partitions2D:
+    ) -> GridPartitions:
         
         partitions = self.prediction(partitions, control)
         pred_partitions = deepcopy(partitions)
