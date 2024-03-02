@@ -2,7 +2,7 @@ from pathlib import Path
 import sys
 import time
 
-from f1a_utils import Prior, Partitions2D, DiscreteBayesFilter, MinMaxNum, measurement_func, prediction_func
+from histogram_filter_utils import Prior, Partitions2D, DiscreteBayesFilter, MinMaxNum, measurement_func, prediction_func
 
 def parse_args():
     # sys.argv[0] is the script name itself
