@@ -65,6 +65,8 @@ class RelevantPartitions2DIterator:
         return it_x, it_y, state[0], state[1], prob
     
 class Partitions2D:
+    PROBABILITY_THRESHOLD = 0.9
+
     def __init__(
         self, 
         x_ivals: MinMaxNum,
@@ -77,7 +79,6 @@ class Partitions2D:
         self._y_delta = (y_ivals.max - y_ivals.min) / y_ivals.num
 
         self.relevant_indices = []
-        self.relevance_threshold = None
 
     @property
     def x_ivals(self) -> MinMaxNum:
@@ -107,27 +108,25 @@ class Partitions2D:
     
     def get_simple_partitions_iter(self) -> SimplePartitions2DIterator:
         return SimplePartitions2DIterator(self)
-    
-    def _calc_relevance_threshold(self) -> None:
-        PROBABILITY_MASS_THRESHOLD = 0.9
-        # Flatten self.ps and sort it in descending order
-        sorted_ps = np.sort(self.ps.flatten())[::-1]
-
-        # Find the index when the cumulative sum exceeds the threshold
-        cumsum = np.cumsum(sorted_ps)
-        idx = np.where(cumsum > PROBABILITY_MASS_THRESHOLD)[0][0]
-
-        self.relevance_threshold = sorted_ps[idx]
 
     def _calc_relevant_indices(self) -> None:
-        self.relevant_indices = np.argwhere(self.ps >= self.relevance_threshold).tolist()
+
+        def _calc_relevance_threshold() -> None:
+            # Flatten self.ps and sort it in descending order
+            sorted_ps = np.sort(self.ps.flatten())[::-1]
+
+            # Find the index when the cumulative sum exceeds the threshold
+            cumsum = np.cumsum(sorted_ps)
+            idx = np.where(cumsum > Partitions2D.PROBABILITY_THRESHOLD)[0][0]
+
+            return sorted_ps[idx]
+
+        self.relevant_indices = np.argwhere(
+            self.ps >= _calc_relevance_threshold()).tolist()
     
     def get_relevant_partitions_iter(self) -> RelevantPartitions2DIterator:
         if self.relevant_indices:
             return RelevantPartitions2DIterator(self)
-        
-        if self.relevance_threshold is None:
-            self._calc_relevance_threshold()
 
         self._calc_relevant_indices()
         return RelevantPartitions2DIterator(self)
@@ -254,6 +253,7 @@ class DiscreteBayesFilter:
     ) -> Partitions2D:
         new_partitions = Partitions2D(partitions._x_ivals, partitions._y_ivals)
 
+        normalizer = 0
         with concurrent.futures.ProcessPoolExecutor() as executor:
             params = [
                 (it_x, it_v, curr_x, curr_v, partitions, control, self.prediction_func)
@@ -263,6 +263,10 @@ class DiscreteBayesFilter:
 
             for it_x, it_v, p in results:
                 new_partitions[it_x, it_v] = p
+                normalizer += p
+        
+        for it_x, it_v, _, _, _ in new_partitions.get_simple_partitions_iter():
+            new_partitions[it_x, it_v] /= normalizer
         
         return new_partitions
     

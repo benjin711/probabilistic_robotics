@@ -14,8 +14,8 @@ def parse_args():
 
 def f1():
     TIMESTEPS = 5
-    MIN_X, MAX_X, NUM_X = -15, 15, 30
-    MIN_Y, MAX_Y, NUM_Y = -15, 15, 30
+    MIN_X, MAX_X, NUM_X = -15, 15, 60
+    MIN_Y, MAX_Y, NUM_Y = -15, 15, 60
     x_ivals = MinMaxNum(MIN_X, MAX_X, NUM_X)
     y_ivals = MinMaxNum(MIN_Y, MAX_Y, NUM_Y)
     
@@ -33,6 +33,7 @@ def f1():
     partitions.visualize_2D_histogram(Path(f"4.6/out/f1a_vis_t{0}.png"))
 
     for t in range(TIMESTEPS):
+        print(f"t = {t}...")
         partitions, pred_partitions = dbf.update(partitions, measurements[t], controls[t])
 
         if t == TIMESTEPS - 1:
