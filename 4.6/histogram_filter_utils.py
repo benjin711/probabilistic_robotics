@@ -71,10 +71,22 @@ class GridPartitions:
     def ivals(self) -> Tuple[MinMaxNum]:
         return self._ivals
 
-    def idx_to_state(self, idxs: Tuple[int]) -> Tuple[float, float]:
+    def idx_to_state(self, idxs: Tuple[int]) -> Generator[float, None, None]:
         return (
             ival.min + idx * delta + delta / 2
             for ival, delta, idx in zip(self._ivals, self._deltas, idxs)
+        )
+    
+    def state_to_idx(self, state: Generator[float, None, None]) -> Tuple[int]:
+        state = list(state)
+        
+        # Return None if state is out of bounds
+        if any(not (ival.min <= x <= ival.max) for ival, x in zip(self._ivals, state)):
+            return None
+        
+        return tuple(
+            int((x - ival.min) / delta)
+            for ival, delta, x in zip(self._ivals, self._deltas, state)
         )
 
     def init_with_prior(self, prior: Callable) -> None:
