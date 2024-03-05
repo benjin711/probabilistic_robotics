@@ -44,6 +44,20 @@ def prediction_func_ex1(
     return mvg.pdf([curr_state[0], curr_state[1]])
 
 
+def _calc_partition_probability(args):
+    idx, curr_state, partitions, control, prediction_func = args
+    partition_probability = 0.0
+
+    for _, prev_state, prev_p in partitions.get_relevant_partitions_iter():
+        partition_probability += prediction_func(
+            curr_state, 
+            prev_state,
+            control
+        ) * prev_p
+
+    return idx, partition_probability
+
+
 class BasicPredictor:
 
     def __init__(self, prediction_func: Callable) -> None:
@@ -84,7 +98,7 @@ def measurement_func_ex1(curr_state: Generator[float, None, None], measurement: 
 def state_transition_func_ex2(
     curr_state: Generator[float, None, None], 
     control: float
-) -> Generator[float]:
+) -> Generator[float, None, None]:
     curr_state = list(curr_state)
     
     new_state = [
@@ -126,18 +140,12 @@ class DeterministicStateTransitionPredictor:
         return new_partitions
 
 
-def _calc_partition_probability(args):
-    idx, curr_state, partitions, control, prediction_func = args
-    partition_probability = 0.0
+def measurement_func_ex2(curr_state: Generator[float, None, None], measurement: float):
+    curr_state = list(curr_state)
+    var = 0.01
+    gaussian = norm(loc=curr_state[0], scale=np.sqrt(var))
+    return gaussian.pdf(measurement)
 
-    for _, prev_state, prev_p in partitions.get_relevant_partitions_iter():
-        partition_probability += prediction_func(
-            curr_state, 
-            prev_state,
-            control
-        ) * prev_p
-
-    return idx, partition_probability
 
 class DiscreteBayesFilter:
     def __init__(

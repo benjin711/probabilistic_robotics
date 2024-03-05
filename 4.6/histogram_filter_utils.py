@@ -1,11 +1,9 @@
-from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Generator, Tuple
 
 import numpy as np
-from scipy.stats import multivariate_normal, norm
+from scipy.stats import multivariate_normal
 import matplotlib.pyplot as plt
-import concurrent.futures
 
 from dataclasses import dataclass
 
@@ -133,18 +131,12 @@ class GridPartitions:
     def visualize_2D_histogram(
         self, 
         path: Path,
-        slices: Tuple[Any] = (Ellipsis,),
-        labels: Tuple[str] = ("X", "V", "p")
+        labels: Tuple[str] = ("X", "V", "p"),
+        preprocess_func: Callable = None
     ) -> None:
         # Create 2D array
-        hist = self._ps[slices]
+        hist, x_idx, y_idx = preprocess_func(self._ps) if preprocess_func else self._ps
         assert len(hist.shape) == 2, "Histogram must be 2D"
-
-        # Fetch the information from the relevant x and y axes
-        x_idx, y_idx = 0, 1
-        alt_idxs = [idx for idx, obj in enumerate(slices) if isinstance(obj, (slice, type(Ellipsis)))][:2]
-        if len(alt_idxs) == 2:
-            x_idx, y_idx = alt_idxs
 
         x_edges = np.linspace(self._ivals[x_idx].min, self._ivals[x_idx].max, self._ivals[x_idx].num, endpoint=False)
         y_edges = np.linspace(self._ivals[y_idx].min, self._ivals[y_idx].max, self._ivals[y_idx].num, endpoint=False)
@@ -188,6 +180,7 @@ class GridPartitions:
 
         plt.subplots_adjust(wspace=0.5)
         plt.savefig(path)
+        plt.close()
 
 
 class Prior_ex1:
@@ -199,125 +192,23 @@ class Prior_ex1:
         self.value = value
         self.deltas = [(ival.max - ival.min) / ival.num for ival in ivals]
 
-    def __call__(self, state: Tuple[float]) -> float:
+    def __call__(self, state: Generator[float, None, None]) -> float:
         if all(-delta <= x <= delta for x, delta in zip(state, self.deltas)): 
             return self.value
         
         return 0
     
 
-def prediction_func_3x1(
-    curr_state: Generator[float, None, None], 
-    prev_state: Generator[float, None, None], 
-    control: float
-) -> float:
-    curr_state = list(curr_state)
-    prev_state = list(prev_state)
+class Prior_ex2:
+    def __init__(self) -> None:
+        mean = np.array([0, 0, 0])
+        cov = np.array([
+            [0.01, 0, 0],
+            [0, 0.01, 0],
+            [0, 0, 10000]
+        ])
+        self.mvg = multivariate_normal(mean, cov)
 
-    A = np.array([
-        [1, 1],
-        [0, 1]
-    ])
-
-    # Having perfectly correlated RV can lead to issues, e.g. cases where the multivariate
-    # gaussian will always yield 0 due discrete nature of the representative states
-    # and the density lying on a line. Adding an epsilon makes the experiment more realistic 
-    # and makes the belief look more like a Gaussian avoiding weird corner cases
-    EPSILON = 0.05
-    cov = [[1/4, 1/2 - EPSILON],[1/2 - EPSILON, 1]]
-    mean = A @ np.array([[prev_state[0]], [prev_state[1]]])
-    mean = mean.T.squeeze().tolist()
-    mvg = multivariate_normal(mean, cov, allow_singular=True)
-
-    return mvg.pdf([curr_state[0], curr_state[1]])
-
-
-def measurement_func_ex1(curr_state: Generator[float, None, None], measurement: float):
-    curr_state = list(curr_state)
-    var = 10
-    gaussian = norm(loc=curr_state[0], scale=np.sqrt(var))
-    return gaussian.pdf(measurement)
-
-
-def _calc_partition_probability(args):
-    idx, curr_state, partitions, control, prediction_func = args
-    partition_probability = 0.0
-
-    for _, prev_state, prev_p in partitions.get_relevant_partitions_iter():
-        partition_probability += prediction_func(
-            curr_state, 
-            prev_state,
-            control
-        ) * prev_p
-
-    return idx, partition_probability
-
-class DiscreteBayesFilter:
-    def __init__(
-        self, 
-        prediction_func: Callable = None,
-        measurement_func: Callable = None
-    ) -> None:
-        self.prediction_func = prediction_func
-        self.measurement_func = measurement_func
-
-    def prediction(
-        self,
-        partitions: GridPartitions,
-        control: float
-    ) -> GridPartitions:
-        new_partitions = GridPartitions(partitions.ivals)
-
-        normalizer = 0
-        with concurrent.futures.ProcessPoolExecutor() as executor:
-            params = [
-                (idx, list(state), partitions, control, self.prediction_func)
-                for idx, state, _ in new_partitions.get_simple_partitions_iter()
-            ]
-            results = executor.map(_calc_partition_probability, params)
-
-            for idx, p in results:
-                new_partitions[idx] = p
-                normalizer += p
-        
-        for idx, _, _ in new_partitions.get_simple_partitions_iter():
-            new_partitions[idx] /= normalizer
-        
-        return new_partitions
-    
-    def correction(
-        self,
-        partitions: GridPartitions,
-        measurement: float,
-    ) -> GridPartitions:
-        if measurement is None:
-            return partitions
-
-        normalizer = 0
-        for idx, curr_state, _ in partitions.get_simple_partitions_iter():
-            partitions[idx] *= self.measurement_func(
-                curr_state, 
-                measurement
-            )
-
-            normalizer += partitions[idx]
-
-        for idx, _, _ in partitions.get_simple_partitions_iter():
-            partitions[idx] /= normalizer
-        
-        return partitions
-
-
-    def update(
-        self,
-        partitions: GridPartitions, 
-        measurement: float = None, 
-        control: float = None
-    ) -> GridPartitions:
-        
-        partitions = self.prediction(partitions, control)
-        pred_partitions = deepcopy(partitions)
-        
-        partitions = self.correction(partitions, measurement)
-
-        return partitions, pred_partitions
+    def __call__(self, state: Generator[float, None, None]) -> float:
+        state = list(state)
+        return self.mvg.pdf(state)
