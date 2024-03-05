@@ -6,6 +6,7 @@ import numpy as np
 
 from histogram_filter_utils import Prior_ex1, GridPartitions, MinMaxNum, Prior_ex2
 from dbf import DeterministicStateTransitionPredictor, DiscreteBayesFilter, BasicPredictor, measurement_func_ex2, prediction_func_ex1, measurement_func_ex1, state_transition_func_ex2
+from particle_filter_utils import ParticleSet
 
 def parse_args():
     # sys.argv[0] is the script name itself
@@ -99,6 +100,63 @@ def f2():
         )
 
 
+def f4():
+    PATH = Path("4.6/out/ex4")
+    PATH.mkdir(parents=True, exist_ok=True)
+    TIMESTEPS = 5
+    NUM_PARTICLES = 1000
+    SEED = 42
+    rng = np.random.default_rng(SEED)
+
+    particles = ParticleSet(NUM_PARTICLES, 2)
+
+    controls = [None] * 5
+    measurements = [None] * 5
+    measurements[-1] = 5
+
+    # pf = ParticleFilter()
+
+    particles.visualize_particles(PATH / f"f4_vis_t{0}.png")
+
+    for t in range(TIMESTEPS):
+        # pf.update(particles, measurements[t], controls[t])
+        pass
+
+
+def f5():
+    PATH = Path("4.6/out/ex5")
+    PATH.mkdir(parents=True, exist_ok=True)
+    TIMESTEPS = 1
+    NUM_PARTICLES = 1000
+    SEED = 42
+    rng = np.random.default_rng(SEED)
+
+    particles = ParticleSet(NUM_PARTICLES, 3)
+    particles.gaussian_init(
+        rng=rng,
+        mean=np.zeros((3)),
+        cov=np.diag([0.01, 0.01, 10000])
+    )
+
+    controls = [None]
+    measurements = [-0.7]
+
+    # pf = ParticleFilter()
+
+    def preprocess_func(particles, weights):
+        return particles[:, :2], weights
+
+    particles.visualize_particles(
+        PATH / f"f5_vis_t{0}.png",
+        labels=("X", "Y", "Theta"),
+        preprocess_func=preprocess_func
+    )
+
+    for t in range(TIMESTEPS):
+        # pf.update(particles, measurements[t], controls[t])
+        pass
+
+
 def main():
     start_time = time.time()
 
@@ -107,6 +165,12 @@ def main():
         f1()
     elif task == "2":
         f2()
+    elif task == "4":
+        f4()
+    elif task == "5":
+        f5()
+    else:
+        raise ValueError(f"Invalid task: {task}")
 
     end_time = time.time()
     print(f"The function took {end_time - start_time} seconds to execute.")
