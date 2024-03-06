@@ -7,6 +7,7 @@ import numpy as np
 from histogram_filter_utils import Prior_ex1, GridPartitions, MinMaxNum, Prior_ex2
 from dbf import DeterministicStateTransitionPredictor, DiscreteBayesFilter, BasicPredictor, measurement_func_ex2, prediction_func_ex1, measurement_func_ex1, state_transition_func_ex2
 from particle_filter_utils import ParticleSet
+from particle_filter import ParticleFilter, RandomResampler, measurement_func_ex5, state_transition_func_ex4, measurement_func_ex4, state_transition_func_ex5
 
 def parse_args():
     # sys.argv[0] is the script name itself
@@ -108,31 +109,41 @@ def f4():
     SEED = 42
     rng = np.random.default_rng(SEED)
 
-    particles = ParticleSet(NUM_PARTICLES, 2)
+    particle_set = ParticleSet(NUM_PARTICLES, 2)
 
     controls = [None] * 5
     measurements = [None] * 5
     measurements[-1] = 5
 
-    # pf = ParticleFilter()
+    pf = ParticleFilter(
+        rng=rng,
+        state_transition_func=state_transition_func_ex4,
+        measurement_func=measurement_func_ex4,
+        resampler=RandomResampler()
+    )
 
-    particles.visualize_particles(PATH / f"f4_vis_t{0}.png")
+    particle_set.visualize_particles(PATH / f"f4_vis_t{0}.png")
 
     for t in range(TIMESTEPS):
-        # pf.update(particles, measurements[t], controls[t])
-        pass
+        print(f"t = {t+1}...")
+        particle_set, particle_set_pred = pf.update(particle_set, measurements[t], controls[t])
+        
+        if t == TIMESTEPS - 1:
+            particle_set_pred.visualize_particles(PATH / f"f4_vis_t{t+1}_pred.png")
+
+        particle_set.visualize_particles(PATH / f"f4_vis_t{t+1}.png")
 
 
 def f5():
     PATH = Path("4.6/out/ex5")
     PATH.mkdir(parents=True, exist_ok=True)
     TIMESTEPS = 1
-    NUM_PARTICLES = 1000
+    NUM_PARTICLES = 100
     SEED = 42
     rng = np.random.default_rng(SEED)
 
-    particles = ParticleSet(NUM_PARTICLES, 3)
-    particles.gaussian_init(
+    particle_set = ParticleSet(NUM_PARTICLES, 3)
+    particle_set.gaussian_init(
         rng=rng,
         mean=np.zeros((3)),
         cov=np.diag([0.01, 0.01, 10000])
@@ -141,20 +152,43 @@ def f5():
     controls = [None]
     measurements = [-0.7]
 
-    # pf = ParticleFilter()
+    pf = ParticleFilter(
+        rng=rng,
+        state_transition_func=state_transition_func_ex5,
+        measurement_func=measurement_func_ex5,
+        resampler=RandomResampler()
+    )
 
     def preprocess_func(particles, weights):
         return particles[:, :2], weights
 
-    particles.visualize_particles(
+    particle_set.visualize_particles(
         PATH / f"f5_vis_t{0}.png",
         labels=("X", "Y", "Theta"),
+        xlim=(-2, 2),
+        ylim=(-2, 2),
         preprocess_func=preprocess_func
     )
 
     for t in range(TIMESTEPS):
-        # pf.update(particles, measurements[t], controls[t])
-        pass
+        print(f"t = {t+1}...")
+        particle_set, particle_set_pred = pf.update(particle_set, measurements[t], controls[t])
+        
+        particle_set_pred.visualize_particles(
+            PATH / f"f5_vis_t{t+1}_pred.png",
+            labels=("X", "Y", "Theta"),
+            xlim=(-2, 2),
+            ylim=(-2, 2),
+            preprocess_func=preprocess_func
+        )
+
+        particle_set.visualize_particles(
+            PATH / f"f5_vis_t{t+1}.png",
+            labels=("X", "Y", "Theta"),
+            xlim=(-2, 2),
+            ylim=(-2, 2),
+            preprocess_func=preprocess_func
+        )
 
 
 def main():
